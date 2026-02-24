@@ -188,6 +188,11 @@ def save_memory(payload):
     }
 
 
+# Boost added to semantic score when at least one requested tag matches the memory's tags.
+# Semantic scores from vector DB are typically in the hundreds; this makes tag match meaningful.
+TAG_MATCH_BOOST = 200.0
+
+
 def search_memory(payload):
     m = get_memory()
     query = payload["query"]
@@ -195,13 +200,12 @@ def search_memory(payload):
     tags = payload.get("tags", [])
     limit = payload.get("limit", 5)
     
-    # For now, search without filters and post-filter in Python
-    # ChromaDB metadata filtering is limited for array fields
+    # Semantic search only; no hard filter by tags
     results = m.search(
-        query, 
-        user_id=user_id, 
-        agent_id="coding-agent", 
-        limit=limit * 2  # Get more results to account for filtering
+        query,
+        user_id=user_id,
+        agent_id="coding-agent",
+        limit=limit * 3,  # Fetch extra so we have enough after scoring/sort
     )
     
     items = []
@@ -209,22 +213,23 @@ def search_memory(payload):
         for item in results["results"]:
             metadata = item.get("metadata", {})
             item_tags = metadata.get("tags", []) if metadata else []
+            semantic_score = float(item.get("score") or 0.0)
             
-            # If tags specified, filter to only memories with matching tags
-            if tags:
-                if not any(tag in item_tags for tag in tags):
-                    continue
+            # Tag match adds a boost; no tag filter means we never drop relevant results
+            tag_matched = bool(tags and any(tag in item_tags for tag in tags))
+            combined_score = semantic_score + (TAG_MATCH_BOOST if tag_matched else 0.0)
             
             items.append({
                 "id": item.get("id", ""),
                 "memory": item.get("memory", ""),
                 "tags": item_tags,
-                "score": item.get("score"),
+                "score": round(combined_score, 2),
+                "tag_matched": tag_matched,
             })
-            
-            # Limit results after filtering
-            if len(items) >= limit:
-                break
+        
+        # Rank by combined score (tag matches rank higher, but semantic hits still appear)
+        items.sort(key=lambda x: x["score"], reverse=True)
+        items = items[:limit]
     
     return {"results": items}
 

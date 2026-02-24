@@ -1,13 +1,13 @@
 services:
-  chromadb:
-    image: chromadb/chroma:latest
-    container_name: chromadb
+  qdrant:
+    image: qdrant/qdrant:latest
     ports:
-      - "8000:8000"
+      - "6333:6333"
+      - "6334:6334"
     volumes:
-      - chroma_data:/chroma/chroma
+      - qdrant_storage:/qdrant/storage
     environment:
-      - ANONYMIZED_TELEMETRY=false
+      - QDRANT__SERVICE__GRPC_PORT=6334
 
 volumes:
-  chroma_data:
+  qdrant_storage:
