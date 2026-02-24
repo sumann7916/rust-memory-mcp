@@ -14,7 +14,7 @@ pub struct SaveMemoryParams {
     #[serde(default)]
     pub repo: Option<String>,
     #[serde(default)]
-    pub module: Option<String>,
+    pub file_path: Option<String>,
     #[serde(default)]
     pub lang: Option<String>,
 }
@@ -55,8 +55,8 @@ pub struct MemoryItem {
     pub category: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repo: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub module: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub modules: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lang: Option<String>,
     pub timestamp: i64,
@@ -71,7 +71,7 @@ impl From<MemoryPayload> for MemoryItem {
             content: p.content,
             category: p.category,
             repo: p.repo,
-            module: p.module,
+            modules: p.modules,
             lang: p.lang,
             timestamp: p.timestamp,
             score: None,
@@ -121,6 +121,61 @@ const GLOBAL_CHECK_PROMPT: &str = r#"Does the following memory describe a univer
 
 Memory: "#;
 
+const MODULE_SCOPE_PROMPT: &str = r#"Analyze this memory and the file path context.
+Does this memory apply to:
+- 'single': Only the current module/directory
+- 'multiple': Multiple specific modules (list them based on what the memory describes)
+- 'repo': The entire repository (architecture decisions, repo-wide conventions, etc.)
+
+File path: {file_path}
+Memory: {content}
+
+Reply with ONLY valid JSON, no other text:
+{"scope": "single", "modules": []} for single module (modules will be derived from file path)
+{"scope": "multiple", "modules": ["module1", "module2"]} for multiple modules
+{"scope": "repo", "modules": []} for repo-wide"#;
+
+#[derive(Debug, Deserialize)]
+struct ModuleScopeResponse {
+    scope: String,
+    #[serde(default)]
+    modules: Vec<String>,
+}
+
+/// Extract module (directory) from a file path.
+/// e.g. "highway/index.js" -> "highway"
+///      "./src/auth/login.ts" -> "src/auth"
+///      "service.js" -> None (root level)
+fn extract_module_from_path(file_path: Option<&str>) -> Option<String> {
+    let s = file_path?.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let s = s.replace('\\', "/");
+    let s = s.strip_prefix("./").unwrap_or(&s);
+    let s = s.strip_prefix('/').unwrap_or(s);
+    if s.is_empty() {
+        return None;
+    }
+    if let Some((dir, _)) = s.rsplit_once('/') {
+        if dir.is_empty() {
+            return None;
+        }
+        return Some(dir.to_string());
+    }
+    None
+}
+
+/// Normalize a module name for consistent storage/search.
+fn normalize_module_name(module: &str) -> String {
+    let s = module.trim();
+    let s = s.replace('\\', "/");
+    let s = s.strip_prefix("./").unwrap_or(&s);
+    let s = s.strip_prefix('/').unwrap_or(s);
+    let s = s.strip_suffix('/').unwrap_or(s);
+    s.to_string()
+}
+
 pub async fn save_memory(
     params: SaveMemoryParams,
     llm: &dyn LLMProvider,
@@ -141,6 +196,12 @@ pub async fn save_memory(
 
     let repo = if is_global { None } else { params.repo };
 
+    let modules = if is_global {
+        vec![]
+    } else {
+        determine_modules(&fact, params.file_path.as_deref(), llm).await?
+    };
+
     let embedding = embedder.embed(&fact).await?;
 
     let memory_id = Uuid::new_v4().to_string();
@@ -155,7 +216,7 @@ pub async fn save_memory(
         user_id: params.user_id.clone(),
         category: category.clone(),
         repo: repo.clone(),
-        module: params.module.clone(),
+        modules: modules.clone(),
         lang: params.lang.clone(),
         timestamp,
     };
@@ -167,7 +228,7 @@ pub async fn save_memory(
         content: fact,
         category,
         repo,
-        module: params.module,
+        modules,
         lang: params.lang,
         timestamp,
         score: None,
@@ -178,6 +239,61 @@ pub async fn save_memory(
         message: format!("Memory saved for user {}", params.user_id),
         memory: memory_item,
     })
+}
+
+async fn determine_modules(
+    content: &str,
+    file_path: Option<&str>,
+    llm: &dyn LLMProvider,
+) -> anyhow::Result<Vec<String>> {
+    let file_path_str = file_path.unwrap_or("(not provided)");
+    let prompt = MODULE_SCOPE_PROMPT
+        .replace("{file_path}", file_path_str)
+        .replace("{content}", content);
+
+    let response = llm.complete(&prompt).await?;
+
+    let scope_response: ModuleScopeResponse = match serde_json::from_str(&response) {
+        Ok(r) => r,
+        Err(_) => {
+            if let Some(module) = extract_module_from_path(file_path) {
+                return Ok(vec![module]);
+            }
+            return Ok(vec![]);
+        }
+    };
+
+    match scope_response.scope.as_str() {
+        "single" => {
+            if let Some(module) = extract_module_from_path(file_path) {
+                Ok(vec![module])
+            } else {
+                Ok(vec![])
+            }
+        }
+        "multiple" => {
+            let normalized: Vec<String> = scope_response
+                .modules
+                .iter()
+                .map(|m| normalize_module_name(m))
+                .filter(|m| !m.is_empty())
+                .collect();
+            if normalized.is_empty() {
+                if let Some(module) = extract_module_from_path(file_path) {
+                    return Ok(vec![module]);
+                }
+            }
+            Ok(normalized)
+        }
+        "repo" => Ok(vec![]),
+        _ => {
+            if let Some(module) = extract_module_from_path(file_path) {
+                Ok(vec![module])
+            } else {
+                Ok(vec![])
+            }
+        }
+    }
 }
 
 fn normalize_category(raw: &str) -> String {
@@ -199,13 +315,14 @@ pub async fn search_memory(
     store: &QdrantStore,
 ) -> anyhow::Result<SearchResult> {
     let embedding = embedder.embed(&params.query).await?;
+    let module = extract_module_from_path(params.module.as_deref());
 
     let results = store
         .search(
             embedding,
             &params.user_id,
             params.repo.as_deref(),
-            params.module.as_deref(),
+            module.as_deref(),
             params.lang.as_deref(),
             params.limit as u64,
         )

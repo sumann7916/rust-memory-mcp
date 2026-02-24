@@ -14,8 +14,8 @@ pub struct MemoryPayload {
     pub category: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repo: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub module: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub modules: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lang: Option<String>,
     pub timestamp: i64,
@@ -103,8 +103,15 @@ impl QdrantStore {
             must_conditions.push(Condition::matches("lang", l.to_string()));
         }
 
+        // modules empty = repo-wide (applies to all modules)
+        // modules populated = specific modules
+        // When filtering by module: include (modules is empty OR modules contains provided)
         if let Some(m) = module {
-            must_conditions.push(Condition::matches("module", m.to_string()));
+            let module_filter = Filter::should([
+                Condition::is_empty("modules"),
+                Condition::matches("modules", m.to_string()),
+            ]);
+            must_conditions.push(Condition::from(module_filter));
         }
 
         let filter = Filter::must(must_conditions);

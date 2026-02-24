@@ -65,7 +65,7 @@ impl MemoryServer {
         }
     }
 
-    #[tool(description = "Save a memory. The server automatically extracts the key fact, classifies it, and determines whether it's global or repo-specific. Parameters: content (required), user_id (required), repo (optional - current repo name), module (optional - current file path), lang (optional - programming language). Call proactively when you learn something useful, solve a problem, or the user shows a preference.")]
+    #[tool(description = "Save a memory. The server extracts the key fact, classifies it, and determines scope (single module, multiple modules, or repo-wide). Parameters: content (required), user_id (required), repo (optional - e.g. portpro-backend), file_path (optional - current file path from editor, e.g. src/auth/login.ts; server extracts module from directory and LLM decides if memory applies to single/multiple/all modules), lang (optional). Call proactively when you learn something useful or the user shows a preference.")]
     async fn save_memory(
         &self,
         params: Parameters<SaveMemoryParams>,
@@ -88,7 +88,7 @@ impl MemoryServer {
         )]))
     }
 
-    #[tool(description = "Search memories by semantic similarity. Returns both global memories (apply everywhere) and repo-specific memories. Parameters: query (required), user_id (required), repo (optional - filters to global + this repo), module (optional), lang (optional), limit (optional, default 5). ALWAYS call this before generating code or answering technical questions.")]
+    #[tool(description = "Search memories by semantic similarity. Returns global + repo-wide + module-specific memories. Parameters: query (required), user_id (required), repo (optional - filters to global OR this repo), module (optional - current file path from editor, e.g. src/auth/login.ts; extracts directory and returns memories with empty modules OR containing this module), lang (optional), limit (optional, default 5). Call before generating code or plans.")]
     async fn search_memory(
         &self,
         params: Parameters<SearchMemoryParams>,
