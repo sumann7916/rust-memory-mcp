@@ -1,6 +1,6 @@
 # Memory MCP Server
 
-A Rust MCP (Model Context Protocol) server that provides persistent memory capabilities using mem0. The server exposes tools for saving, searching, retrieving, and deleting memories, with support for multiple LLM providers.
+A Rust MCP (Model Context Protocol) server that provides persistent memory capabilities using Qdrant vector database. The server implements an LLM-first architecture where the LLM handles all intelligence (fact extraction, topic determination, scope decisions) and the server provides dumb storage with semantic search + boost-based ranking.
 
 ## Architecture
 
@@ -9,36 +9,46 @@ A Rust MCP (Model Context Protocol) server that provides persistent memory capab
 │   AI Client     │◄──────────────►│  Rust MCP       │
 │  (e.g. Cursor)  │   JSON-RPC     │  Server         │
 └─────────────────┘                └────────┬────────┘
-                                            │ subprocess
+                                            │
                                             ▼
                                    ┌─────────────────┐
-                                   │   memory.py     │
-                                   │   (mem0)        │
+                                   │  Qdrant Vector  │
+                                   │  Database       │
                                    └────────┬────────┘
                                             │
-                          ┌─────────────────┼─────────────────┐
-                          ▼                 ▼                 ▼
-                   ┌───────────┐     ┌───────────┐     ┌───────────┐
-                   │  Ollama   │     │  Gemini   │     │  OpenAI   │
-                   │  (local)  │     │  (cloud)  │     │  (cloud)  │
-                   └───────────┘     └───────────┘     └───────────┘
+                                   ┌────────┴────────┐
+                                   │  Embedder Model │
+                                   │  (local/cloud)  │
+                                   └─────────────────┘
 ```
+
+## Core Philosophy
+
+**LLM = Intelligence**: The LLM does all the thinking - extracting facts, determining topics, deciding scope.
+
+**Server = Dumb Storage + Boost Ranking**: The server just does semantic search, applies boost multipliers, and returns ranked results.
+
+**Only Hard Filter**: `user_id` - Everything else (repo, lang, module, feature, topics, scope) becomes boost signals.
 
 ## Prerequisites
 
 - Rust (for building the MCP server)
-- Python 3.10+
 - One of:
   - Ollama running locally (default)
   - Gemini API key
   - OpenAI API key
+- Qdrant (for vector storage)
 
 ## Installation
 
-### 1. Install Python dependencies
+### 1. Install Qdrant
 
 ```bash
-pip install -r requirements.txt
+# Option A: Run with Docker
+docker run -p 6334:6334 qdrant/qdrant
+
+# Option B: Install locally
+# See https://qdrant.tech/documentation/quick-start/
 ```
 
 ### 2. Build the Rust MCP server
@@ -50,7 +60,7 @@ cargo build --release
 
 The binary will be at `mcp/target/release/memory-mcp`.
 
-### 3. Set up your LLM provider
+### 3. Set up your embedder provider
 
 #### Option A: Local with Ollama (default)
 
@@ -59,8 +69,7 @@ The binary will be at `mcp/target/release/memory-mcp`.
 # Start Ollama
 ollama serve
 
-# Pull required models
-ollama pull qwen2.5-coder:7b
+# Pull embedding model
 ollama pull nomic-embed-text
 ```
 
@@ -69,143 +78,237 @@ No environment variables needed - Ollama is the default.
 #### Option B: Gemini (cloud)
 
 ```bash
-export LLM_PROVIDER=gemini
-export LLM_MODEL=gemini-2.0-flash
-export GEMINI_API_KEY=your-api-key
 export EMBEDDER_PROVIDER=gemini
 export EMBEDDER_MODEL=models/text-embedding-004
+export GEMINI_API_KEY=your-api-key
 ```
 
 #### Option C: OpenAI (cloud)
 
 ```bash
-export LLM_PROVIDER=openai
-export LLM_MODEL=gpt-4o-mini
-export OPENAI_API_KEY=your-api-key
 export EMBEDDER_PROVIDER=openai
 export EMBEDDER_MODEL=text-embedding-3-small
+export OPENAI_API_KEY=your-api-key
 ```
 
 ## Configuration
 
 All configuration is done via environment variables:
 
-### LLM & Embedder
+### Embedder
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `LLM_PROVIDER` | `ollama`, `gemini`, `openai`, `anthropic` | `ollama` |
-| `LLM_MODEL` | Model name for the LLM | Provider-dependent |
 | `EMBEDDER_PROVIDER` | `ollama`, `gemini`, `openai` | `ollama` |
 | `EMBEDDER_MODEL` | Model name for embeddings | Provider-dependent |
 | `GEMINI_API_KEY` | Gemini API key | - |
 | `OPENAI_API_KEY` | OpenAI API key | - |
-| `ANTHROPIC_API_KEY` | Anthropic API key | - |
 | `OLLAMA_BASE_URL` | Ollama endpoint | `http://localhost:11434` |
 
-### Vector Store (ChromaDB)
+### Vector Store (Qdrant)
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `CHROMA_HOST` | ChromaDB host (enables Docker mode) | - (local file storage) |
-| `CHROMA_PORT` | ChromaDB port | `8000` |
-| `CHROMA_COLLECTION` | Collection name | `coding_memories` |
+| `QDRANT_HOST` | Qdrant host | `localhost` |
+| `QDRANT_PORT` | Qdrant port | `6334` |
+| `QDRANT_COLLECTION` | Collection name | `coding_memories` |
 
-You can mix providers (e.g., Ollama for embeddings, OpenAI for LLM).
+### Boost Multipliers
 
-### Using ChromaDB with Docker
-
-For persistent storage with Docker:
-
-```bash
-# Start ChromaDB
-docker compose up -d
-
-# Configure the MCP server to use it
-export CHROMA_HOST=localhost
-export CHROMA_PORT=8000
-```
-
-Without `CHROMA_HOST` set, the system uses local file storage at `./chroma_db`.
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `SCOPE_BOOST_LANG` | Boost for lang-scoped memories | `1.3` |
+| `SCOPE_BOOST_FEATURE` | Boost for feature-scoped memories | `1.4` |
+| `SCOPE_BOOST_REPO` | Boost for repo-scoped memories | `1.6` |
+| `SCOPE_BOOST_MODULE` | Boost for module-scoped memories | `2.0` |
+| `TOPIC_BOOST_MAX` | Max additional boost from topic overlap | `0.3` |
+| `MEMORY_SCORE_THRESHOLD` | Min final score to return | `0.75` |
+| `MEMORY_DEDUP_THRESHOLD` | Similarity threshold for deduplication | `0.90` |
 
 ## MCP Tools
 
-The server exposes four tools with tag-based memory scoping:
+The server exposes six tools:
 
-### `save_memory`
-Save a memory with tags for context scoping.
+### `get_memory_index`
+
+Get an index of all existing memories to help with topic consistency.
+
+**Use case:** Call at session start to see what topics, languages, and repos already exist. Cache the result and use it when determining topics for new memories.
 
 **Parameters:**
-- `content` (string): The memory content to save
-- `user_id` (string): User identifier for scoping memories
-- `tags` (array of strings, optional): Tags for organizing memories
+- `user_id` (string, required): User identifier
 
-**Tag conventions:**
+**Response:**
+```json
+{
+  "topics": ["auth", "jwt", "security", "payments", "async", "error-handling"],
+  "langs": ["rust", "typescript", "python"],
+  "repos": ["rust-mem", "portpro-backend"],
+  "scopes": {
+    "global": 12,
+    "lang": 8,
+    "feature": 6,
+    "repo": 14,
+    "module": 4
+  },
+  "total": 44,
+  "recent": [
+    "[feature] JWT refresh tokens should be rotated on every use...",
+    "[global] Use Result type over panic for error handling in Rust",
+    "[repo] API uses PostgreSQL connection pool with max 20 connections"
+  ]
+}
+```
 
-**Scope tags:**
-- `global` - Universal patterns/preferences that apply everywhere
-- `repo:NAME` - Repository-specific (e.g., `repo:rust-mem`)
-- `module:PATH` - File/directory-specific (e.g., `module:src/auth`)
-- `project:NAME` - Project-wide patterns
-
-**Context tags:**
-- `lang:LANGUAGE` - Language-specific (e.g., `lang:rust`, `lang:python`)
-- `framework:NAME` - Framework patterns (e.g., `framework:tokio`, `framework:react`)
-
-**Category tags:**
-- `category:style` - Coding style preferences
-- `category:pattern` - Design patterns
-- `category:bug_fix` - Known issues and fixes
-- `category:preference` - Tool/library preferences
-- `category:api_usage` - API usage examples
+**Benefits:**
+- **Topic consistency**: Reuse existing topics instead of creating variants ("auth" vs "authentication")
+- **Context awareness**: See what languages/repos have memories
+- **Scope distribution**: Understand how memories are organized
+- **Session caching**: Call once, reuse throughout session
 
 **Example:**
 ```javascript
+// At session start
+const index = await get_memory_index({ user_id: "sumankhadka" });
+// Cache topics: ["auth", "jwt", "security", ...]
+
+// Later when saving
+// User says: "JWT tokens should expire"
+// LLM checks cached topics → reuses ["auth", "jwt", "security"]
+// Instead of creating new: ["authentication", "json-web-tokens", "security"]
+```
+
+### `save_memory`
+
+Save a memory. **LLM must pre-process before calling.**
+
+**LLM Pre-processing Steps:**
+1. Extract clean single-sentence fact
+2. Determine 2-5 topics from conversation context
+3. Decide scope using decision tree (see below)
+
+**Parameters:**
+- `content` (string, required): Pre-processed fact
+- `user_id` (string, required): User identifier
+- `topics` (array of strings, required): Topic tags
+- `scope` (string, required): One of: `global`, `lang`, `feature`, `repo`, `module`
+- `repo` (string, optional): Repository name
+- `lang` (string, optional): Programming language
+- `module` (string, optional): Directory path (e.g., `src/auth`)
+- `feature` (string, optional): Product area (e.g., `invoicing`)
+
+**Scope Decision Tree:**
+
+```
+Would I want this in EVERY project I ever work on?           → global
+Would I want this in every [lang] project?                   → lang
+Would I want this whenever working on [feature/domain]?      → feature
+Is this specific to this one repo's architecture/decisions?  → repo
+Is this specific to this one file/folder?                    → module
+```
+
+**Example:**
+
+```javascript
+// User says: "JWT refresh tokens should be rotated on every use"
+
+// LLM thinks:
+// → Fact: "JWT refresh tokens should be rotated on every use and old token invalidated to prevent replay attacks"
+// → Topics: ["auth", "jwt", "security", "tokens"]
+// → Scope: "feature" (applies to auth feature across projects)
+
 save_memory({
-  content: "rmcp 0.16 requires schemars 1.x not 0.8.x to avoid version conflicts",
-  user_id: "suman",
-  tags: ["repo:rust-mem", "lang:rust", "category:bug_fix"]
+  content: "JWT refresh tokens should be rotated on every use and old token invalidated to prevent replay attacks",
+  user_id: "sumankhadka",
+  topics: ["auth", "jwt", "security", "tokens"],
+  scope: "feature",
+  lang: "typescript",
+  feature: "auth"
 })
 ```
 
 ### `search_memory`
-Search memories semantically with tag filtering.
+
+Search memories with semantic similarity + boost-based ranking.
 
 **Parameters:**
-- `query` (string): Search query
-- `user_id` (string): User identifier
-- `tags` (array of strings, optional): Filter by tags (OR logic - matches ANY tag)
-- `limit` (number, optional): Max results (default: 5)
+- `query` (string, required): Search query
+- `user_id` (string, required): User identifier
+- `repo` (string, optional): Repository name (for boost)
+- `module` (string, optional): Directory path (for boost)
+- `lang` (string, optional): Programming language (for boost)
+- `feature` (string, optional): Product area (for boost)
+- `limit` (number, optional): Max results (default: 5, max: 10)
+- `min_score` (number, optional): Override score threshold
 
-**Tag filtering:** Memories matching ANY of the provided tags will be returned. Always include `global` to get universal patterns.
+**How Search Works:**
+1. Qdrant semantic search (filters only by `user_id` and `superseded: false`)
+2. For each result, calculate boost based on:
+   - Scope match (module=2.0x, repo=1.6x, feature=1.4x, lang=1.3x, global=1.0x)
+   - Topic overlap (up to +0.3x)
+   - Confidence (high=1.2x, medium=1.0x, low=0.8x)
+3. Final score = semantic_score × boost
+4. Sort by final score, return top N
+
+**Response includes:**
+- `content`: Memory text
+- `scope`: Scope tier
+- `topics`: Topic tags
+- `score`: Semantic similarity score
+- `boost`: Applied boost multiplier
+- `confidence`: low/medium/high
+- Context fields: `repo`, `lang`, `modules`, `feature`
 
 **Example:**
+
 ```javascript
-// When working in rust-mem/mcp/src/main.rs
 search_memory({
-  query: "how to handle MCP tool parameters",
-  user_id: "suman",
-  tags: ["global", "repo:rust-mem", "module:mcp/src", "lang:rust"],
+  query: "JWT token handling and refresh strategy",
+  user_id: "sumankhadka",
+  repo: "rust-mem",
+  lang: "rust",
+  module: "src/auth",
   limit: 5
 })
+
+// Returns memories ranked by semantic_score * boost
+// Global-scoped memories always surface (boost=1.0)
+// Module-matching memories get biggest boost (boost=2.0)
 ```
 
 ### `get_all_memories`
-Get all memories stored for a user, including their tags.
+
+Get all memories for a user, including superseded ones.
 
 **Parameters:**
-- `user_id` (string): User identifier
+- `user_id` (string, required): User identifier
+
+**Only call when user explicitly asks to see all memories.**
 
 ### `delete_memory`
-Delete a specific memory by its ID.
+
+Delete a specific memory by ID.
 
 **Parameters:**
-- `memory_id` (string): The memory ID to delete
-- `user_id` (string): User identifier
+- `memory_id` (string, required): Memory ID to delete
+- `user_id` (string, required): User identifier
+
+### `correct_memory`
+
+Correct an existing memory. Marks old as superseded, creates new with correction.
+
+**Parameters:**
+- `memory_id` (string, required): Memory ID to correct
+- `user_id` (string, required): User identifier
+- `correction` (string, required): Corrected content
+- `topics` (array of strings, optional): New topics (inherits old if not provided)
+- `scope` (string, optional): New scope (inherits old if not provided)
+
+**Note:** New memory starts with `reinforcement_count: 2` (correction implies confirmation).
 
 ## Usage with Cursor
 
-Add to your Cursor MCP settings (`.cursor/mcp.json`):
+Add to your Cursor MCP settings (`.cursor/mcp.json` or global settings):
 
 ```json
 {
@@ -213,7 +316,7 @@ Add to your Cursor MCP settings (`.cursor/mcp.json`):
     "memory": {
       "command": "/path/to/rust-mem/mcp/target/release/memory-mcp",
       "env": {
-        "LLM_PROVIDER": "ollama"
+        "EMBEDDER_PROVIDER": "ollama"
       }
     }
   }
@@ -222,48 +325,134 @@ Add to your Cursor MCP settings (`.cursor/mcp.json`):
 
 ## Memory Behavior
 
-- All memories are scoped by `user_id` and `agent_id="coding-agent"`
-- Memories can be tagged with flexible context tags for better organization
-- Tags support OR logic: searching with `["lang:rust", "category:pattern"]` returns memories matching either tag
-- Memories are stored locally in `./chroma_db` (or Docker ChromaDB if `CHROMA_HOST` is set)
-- The LLM extracts facts from your input when saving
-- Search uses semantic similarity (not keyword matching) with optional tag filtering
+### Scope Tiers
 
-## Tag-Based Memory Strategy
+Memories are organized into 5 scope tiers that determine boost multipliers:
 
-**When saving memories:**
-1. Use `global` for universal patterns that apply everywhere
-2. Add `repo:NAME` for repository-specific knowledge
-3. Add `lang:LANGUAGE` for language-specific patterns
-4. Use category tags to classify the type of memory
+| Scope | When to Use | Boost Multiplier |
+|-------|-------------|------------------|
+| `global` | Universal patterns that apply everywhere | 1.0x (always surfaces) |
+| `lang` | Language-specific patterns | 1.3x (when lang matches) |
+| `feature` | Cross-repo domain patterns (auth, payments, etc.) | 1.4x (when feature matches) |
+| `repo` | Repository-specific architecture/decisions | 1.6x (when repo matches) |
+| `module` | File/directory specific details | 2.0x (when module matches) |
 
-**When searching memories:**
-1. Always include `global` to get universal patterns
-2. Add current repo/module tags for context-specific results
-3. Add language tag for language-specific patterns
-4. Results include ALL tags, ordered by relevance
+**Non-matching scope gets 0.5x penalty** - but memories can still surface if semantic score is high enough.
 
-**Example workflow:**
+### Topics
+
+Free-form tags extracted by LLM from conversation context:
+
+- **Technical**: `auth`, `jwt`, `websockets`, `database`, `async`, `error-handling`
+- **Domain**: `payments`, `invoicing`, `notifications`, `file-upload`
+- **Tools**: `tokio`, `serde`, `docker`, `kubernetes`
+
+Topics contribute to boost through overlap scoring (up to +0.3x).
+
+### Confidence Levels
+
+Based on reinforcement count:
+
+- **low** (count: 1): New memory, treat as hint, boost=0.8x
+- **medium** (count: 2-4): Confirmed pattern, boost=1.0x
+- **high** (count: 5+): Established pattern, boost=1.2x
+
+### Deduplication
+
+Memories with >0.90 semantic similarity automatically reinforce existing memory instead of creating duplicate. Reinforcement:
+- Increments reinforcement_count
+- Merges content if different
+- Combines topics
+
+### Contradiction Detection
+
+Memories with 0.75-0.90 similarity are checked for contradictions. If new memory contradicts old, the old is marked as superseded.
+
+## Example Workflows
+
+### Save a Preference
+
 ```javascript
-// Working in rust-mem/mcp/src/main.rs
+// User: "I prefer using Result over panic for error handling"
 
-// Search with context
-search_memory({
-  query: "handling async errors",
-  user_id: "suman",
-  tags: ["global", "repo:rust-mem", "lang:rust", "category:pattern"]
-})
+// LLM pre-processes:
+// Fact: "Use Result type over panic for error handling in Rust"
+// Topics: ["rust", "error-handling", "patterns"]
+// Scope: "lang" (applies to all Rust projects)
 
-// Save with tags
 save_memory({
-  content: "Use .await? for async error propagation in Rust",
-  user_id: "suman",
-  tags: ["global", "lang:rust", "category:pattern"]
+  content: "Use Result type over panic for error handling in Rust",
+  user_id: "sumankhadka",
+  topics: ["rust", "error-handling", "patterns"],
+  scope: "lang",
+  lang: "rust"
 })
 ```
 
+### Save a Bug Fix
+
+```javascript
+// User: "The connection timeout was caused by missing keep-alive"
+
+// LLM pre-processes:
+// Fact: "Connection timeout errors caused by missing TCP keep-alive settings — fixed by adding TCP_KEEPALIVE to socket options"
+// Topics: ["networking", "timeout", "tcp", "debugging"]
+// Scope: "feature" (applies to networking code across projects)
+
+save_memory({
+  content: "Connection timeout errors caused by missing TCP keep-alive settings — fixed by adding TCP_KEEPALIVE to socket options",
+  user_id: "sumankhadka",
+  topics: ["networking", "timeout", "tcp", "debugging"],
+  scope: "feature",
+  feature: "networking"
+})
+```
+
+### Search Before Coding
+
+```javascript
+// Before implementing JWT auth in rust-mem/src/auth
+
+search_memory({
+  query: "JWT token handling best practices",
+  user_id: "sumankhadka",
+  repo: "rust-mem",
+  module: "src/auth",
+  lang: "rust",
+  limit: 5
+})
+
+// Returns:
+// 1. Global JWT patterns (boost=1.0)
+// 2. Rust-specific JWT implementations (boost=1.3)
+// 3. Auth feature memories (boost=1.4)
+// 4. rust-mem repo decisions (boost=1.6)
+// All ranked by semantic_score * boost
+```
+
+## Breaking Changes from v1.x
+
+⚠️ **This is v2.0.0 with breaking changes:**
+
+- Old memory format incompatible (`category` → `scope` + `topics`)
+- Existing memories cannot be migrated (scope/topic inference unreliable)
+- Users must rebuild their memory banks with new system
+- LLM pre-processing now required for `save_memory`
+- Removed tools: `get_preferences`, `consolidate_memories`, `get_memory_stats`
+- No LLM provider needed (server only uses embedder)
+
 ## Recommended Usage Pattern
 
-1. **Before generating code**: Call `search_memory` with relevant tags to check for applicable patterns
-2. **When something works**: Call `save_memory` with appropriate tags to remember the solution
-3. **On corrections**: Save what was wrong, what fixed it, with tags indicating scope and category
+1. **Before generating code**: Call `search_memory` with relevant context to get applicable patterns
+2. **When something works**: Call `save_memory` with pre-processed fact, topics, and scope
+3. **On corrections**: Call `correct_memory` to supersede incorrect information
+4. **Trust the code**: If memory contradicts what you see in code, trust the code
+
+## Key Principles
+
+✅ **LLM is smart**: Does all reasoning, extraction, classification  
+✅ **Server is dumb**: Just search, boost, rank, store  
+✅ **Only hard filter**: `user_id`  
+✅ **Everything else boosts**: repo, lang, module, feature, topics, scope  
+✅ **Memories cross boundaries**: repo-scoped memories can help in other repos via lower boost  
+✅ **Simple API**: LLM does work upfront, server execution is straightforward

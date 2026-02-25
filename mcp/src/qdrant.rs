@@ -6,19 +6,52 @@ use qdrant_client::Qdrant;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+pub fn confidence_from_count(count: u32) -> &'static str {
+    match count {
+        1 => "low",
+        2..=4 => "medium",
+        _ => "high",
+    }
+}
+
+fn default_reinforcement_count() -> u32 {
+    1
+}
+
+fn default_confidence() -> String {
+    "low".to_string()
+}
+
+fn default_scope() -> String {
+    "global".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryPayload {
     pub memory_id: String,
     pub content: String,
     pub user_id: String,
-    pub category: String,
+    #[serde(default = "default_scope")]
+    pub scope: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub topics: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repo: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub modules: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lang: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub feature: Option<String>,
     pub timestamp: i64,
+    #[serde(default)]
+    pub last_accessed: i64,
+    #[serde(default = "default_reinforcement_count")]
+    pub reinforcement_count: u32,
+    #[serde(default = "default_confidence")]
+    pub confidence: String,
+    #[serde(default)]
+    pub superseded: bool,
 }
 
 pub struct QdrantStore {
@@ -48,14 +81,16 @@ impl QdrantStore {
             .iter()
             .any(|c| c.name == self.collection);
 
-        if !exists {
-            self.client
-                .create_collection(
-                    CreateCollectionBuilder::new(&self.collection)
-                        .vectors_config(VectorParamsBuilder::new(vector_size, Distance::Cosine)),
-                )
-                .await?;
+        if exists {
+            return Ok(());
         }
+
+        self.client
+            .create_collection(
+                CreateCollectionBuilder::new(&self.collection)
+                    .vectors_config(VectorParamsBuilder::new(vector_size, Distance::Cosine)),
+            )
+            .await?;
 
         Ok(())
     }
@@ -82,39 +117,12 @@ impl QdrantStore {
         &self,
         vector: Vec<f32>,
         user_id: &str,
-        repo: Option<&str>,
-        module: Option<&str>,
-        lang: Option<&str>,
         limit: u64,
     ) -> anyhow::Result<Vec<(MemoryPayload, f32)>> {
-        let mut must_conditions = vec![Condition::matches("user_id", user_id.to_string())];
-
-        let repo_filter = match repo {
-            Some(r) => Filter::should([
-                Condition::is_null("repo"),
-                Condition::matches("repo", r.to_string()),
-            ]),
-            None => Filter::should([Condition::is_null("repo")]),
-        };
-
-        must_conditions.push(Condition::from(repo_filter));
-
-        if let Some(l) = lang {
-            must_conditions.push(Condition::matches("lang", l.to_string()));
-        }
-
-        // modules empty = repo-wide (applies to all modules)
-        // modules populated = specific modules
-        // When filtering by module: include (modules is empty OR modules contains provided)
-        if let Some(m) = module {
-            let module_filter = Filter::should([
-                Condition::is_empty("modules"),
-                Condition::matches("modules", m.to_string()),
-            ]);
-            must_conditions.push(Condition::from(module_filter));
-        }
-
-        let filter = Filter::must(must_conditions);
+        let filter = Filter::must([
+            Condition::matches("user_id", user_id.to_string()),
+            Condition::matches("superseded", false),
+        ]);
 
         let results = self
             .client
@@ -127,45 +135,170 @@ impl QdrantStore {
             )
             .await?;
 
-        let mut memories = Vec::new();
-        for point in results.result {
-            let score = point.score;
-            let payload_value = serde_json::to_value(&point.payload)?;
-            let payload: MemoryPayload = serde_json::from_value(payload_value)?;
-            memories.push((payload, score));
+        results
+            .result
+            .into_iter()
+            .map(|point| {
+                let payload_value = serde_json::to_value(&point.payload)?;
+                let payload: MemoryPayload = serde_json::from_value(payload_value)?;
+                Ok((payload, point.score))
+            })
+            .collect()
+    }
+
+    pub async fn search_for_dedup(
+        &self,
+        vector: Vec<f32>,
+        user_id: &str,
+        limit: u64,
+    ) -> anyhow::Result<Vec<(MemoryPayload, f32)>> {
+        let filter = Filter::must([
+            Condition::matches("user_id", user_id.to_string()),
+            Condition::matches("superseded", false),
+        ]);
+
+        let results = self
+            .client
+            .query(
+                QueryPointsBuilder::new(&self.collection)
+                    .query(vector)
+                    .filter(filter)
+                    .limit(limit)
+                    .with_payload(true),
+            )
+            .await?;
+
+        results
+            .result
+            .into_iter()
+            .map(|point| {
+                let payload_value = serde_json::to_value(&point.payload)?;
+                let payload: MemoryPayload = serde_json::from_value(payload_value)?;
+                Ok((payload, point.score))
+            })
+            .collect()
+    }
+
+    pub async fn get_by_id(
+        &self,
+        memory_id: &str,
+        user_id: &str,
+    ) -> anyhow::Result<Option<MemoryPayload>> {
+        let filter = Filter::must([
+            Condition::matches("memory_id", memory_id.to_string()),
+            Condition::matches("user_id", user_id.to_string()),
+        ]);
+
+        let results = self
+            .client
+            .scroll(
+                ScrollPointsBuilder::new(&self.collection)
+                    .filter(filter)
+                    .limit(1)
+                    .with_payload(true),
+            )
+            .await?;
+
+        results
+            .result
+            .first()
+            .map(|point| {
+                let payload_value = serde_json::to_value(&point.payload)?;
+                serde_json::from_value(payload_value).map_err(Into::into)
+            })
+            .transpose()
+    }
+
+    pub async fn update_payload(
+        &self,
+        memory_id: &str,
+        vector: Vec<f32>,
+        payload: MemoryPayload,
+    ) -> anyhow::Result<()> {
+        self.upsert(memory_id, vector, payload).await
+    }
+
+    pub async fn batch_update_last_accessed(
+        &self,
+        memory_ids: &[String],
+        embeddings: &[(String, Vec<f32>)],
+        payloads: Vec<MemoryPayload>,
+    ) -> anyhow::Result<()> {
+        if memory_ids.is_empty() {
+            return Ok(());
         }
 
-        Ok(memories)
+        let embedding_map: HashMap<&String, &Vec<f32>> =
+            embeddings.iter().map(|(id, vec)| (id, vec)).collect();
+
+        for payload in payloads {
+            let memory_id = payload.memory_id.clone();
+            let Some(vector) = embedding_map.get(&memory_id) else {
+                continue;
+            };
+            self.upsert(&memory_id, (*vector).clone(), payload).await?;
+        }
+
+        Ok(())
     }
 
     pub async fn scroll(&self, user_id: &str) -> anyhow::Result<Vec<MemoryPayload>> {
-        let filter = Filter::must([Condition::matches("user_id", user_id.to_string())]);
+        self.scroll_with_filter(user_id, false).await
+    }
+
+    pub async fn scroll_non_superseded(&self, user_id: &str) -> anyhow::Result<Vec<MemoryPayload>> {
+        self.scroll_with_filter(user_id, true).await
+    }
+
+    async fn scroll_with_filter(
+        &self,
+        user_id: &str,
+        exclude_superseded: bool,
+    ) -> anyhow::Result<Vec<MemoryPayload>> {
+        let base_conditions = vec![Condition::matches("user_id", user_id.to_string())];
+        let superseded_conditions: Vec<_> = exclude_superseded
+            .then(|| Condition::matches("superseded", false))
+            .into_iter()
+            .collect();
+
+        let filter = Filter::must(
+            base_conditions
+                .into_iter()
+                .chain(superseded_conditions)
+                .collect::<Vec<_>>(),
+        );
 
         let mut all_memories = Vec::new();
         let mut offset: Option<qdrant_client::qdrant::PointId> = None;
 
         loop {
-            let mut builder = ScrollPointsBuilder::new(&self.collection)
+            let builder = ScrollPointsBuilder::new(&self.collection)
                 .filter(filter.clone())
                 .limit(100)
                 .with_payload(true);
 
-            if let Some(ref o) = offset {
-                builder = builder.offset(o.clone());
-            }
+            let builder = offset
+                .as_ref()
+                .map(|o| builder.clone().offset(o.clone()))
+                .unwrap_or(builder);
 
             let result = self.client.scroll(builder).await?;
 
-            for point in &result.result {
-                let payload_value = serde_json::to_value(&point.payload)?;
-                let payload: MemoryPayload = serde_json::from_value(payload_value)?;
-                all_memories.push(payload);
-            }
+            let batch_memories: Result<Vec<_>, _> = result
+                .result
+                .iter()
+                .map(|point| {
+                    let payload_value = serde_json::to_value(&point.payload)?;
+                    serde_json::from_value::<MemoryPayload>(payload_value).map_err(anyhow::Error::from)
+                })
+                .collect();
 
-            match result.next_page_offset {
-                Some(next_offset) => offset = Some(next_offset),
-                None => break,
-            }
+            all_memories.extend(batch_memories?);
+
+            let Some(next_offset) = result.next_page_offset else {
+                break;
+            };
+            offset = Some(next_offset);
         }
 
         Ok(all_memories)

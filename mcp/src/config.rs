@@ -28,6 +28,14 @@ pub struct Config {
     pub qdrant_host: String,
     pub qdrant_port: u16,
     pub qdrant_collection: String,
+    pub memory_score_threshold: f32,
+    pub memory_dedup_threshold: f32,
+    pub memory_max_results: usize,
+    pub scope_boost_lang: f32,
+    pub scope_boost_feature: f32,
+    pub scope_boost_repo: f32,
+    pub scope_boost_module: f32,
+    pub topic_boost_max: f32,
 }
 
 impl Config {
@@ -92,6 +100,38 @@ impl Config {
                 .unwrap_or(6334),
             qdrant_collection: env::var("QDRANT_COLLECTION")
                 .unwrap_or_else(|_| "coding_memories".to_string()),
+            memory_score_threshold: env::var("MEMORY_SCORE_THRESHOLD")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0.75),
+            memory_dedup_threshold: env::var("MEMORY_DEDUP_THRESHOLD")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0.90),
+            memory_max_results: env::var("MEMORY_MAX_RESULTS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(5),
+            scope_boost_lang: env::var("SCOPE_BOOST_LANG")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(1.3),
+            scope_boost_feature: env::var("SCOPE_BOOST_FEATURE")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(1.4),
+            scope_boost_repo: env::var("SCOPE_BOOST_REPO")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(1.6),
+            scope_boost_module: env::var("SCOPE_BOOST_MODULE")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(2.0),
+            topic_boost_max: env::var("TOPIC_BOOST_MAX")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0.3),
         })
     }
 

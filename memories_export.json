@@ -1,0 +1,146 @@
+{
+  "memories": [
+    {
+      "memory_id": "05072a57-c902-45b7-b856-b4140e5113e5",
+      "content": "Isolate side effects in well-defined functions.",
+      "category": "preference",
+      "timestamp": 1771943534,
+      "last_accessed": 1771943534,
+      "reinforcement_count": 1,
+      "confidence": "low"
+    },
+    {
+      "memory_id": "0672f5fb-fd05-4b1a-b79c-601ad8565d5e",
+      "content": "The system validates webhook API keys using SHA-256 hashing and comparison with a webhookSecretHash.",
+      "category": "business_logic",
+      "repo": "portpro-backend",
+      "lang": "JavaScript",
+      "timestamp": 1771947005,
+      "last_accessed": 1771947005,
+      "reinforcement_count": 1,
+      "confidence": "low"
+    },
+    {
+      "memory_id": "159c77c6-b1af-4e69-b9d4-0dc05b35c190",
+      "content": "Prioritize functional programming patterns over imperative code.",
+      "category": "preference",
+      "timestamp": 1771949277,
+      "last_accessed": 1771949277,
+      "reinforcement_count": 1,
+      "confidence": "low"
+    },
+    {
+      "memory_id": "649e605e-97c2-4728-bc5c-87af1f2c07f0",
+      "content": "Use the additionalInfo field for non-relevant or view-only fields in spot requests. This applies in the quotes-marketplace module (server/modules/quotes-marketplace/).",
+      "category": "general",
+      "repo": "portpro-backend",
+      "timestamp": 1771998845,
+      "last_accessed": 1771998845,
+      "reinforcement_count": 2,
+      "confidence": "medium"
+    },
+    {
+      "memory_id": "71808038-5c7c-439c-8d1c-75894b8204e1",
+      "content": "Prioritize small, focused functions.",
+      "category": "business_logic",
+      "timestamp": 1771943534,
+      "last_accessed": 1771943534,
+      "reinforcement_count": 1,
+      "confidence": "low"
+    },
+    {
+      "memory_id": "719a79d5-baee-49dc-9738-bfd1821f35a6",
+      "content": "Prioritize `const` and code restructuring over using `let`.",
+      "category": "preference",
+      "timestamp": 1771989229,
+      "last_accessed": 1771989229,
+      "reinforcement_count": 1,
+      "confidence": "low"
+    },
+    {
+      "memory_id": "90c52f4b-a7d9-4c99-a8a6-bc4e06898718",
+      "content": "Avoid mutating variables or objects directly.",
+      "category": "preference",
+      "timestamp": 1771943533,
+      "last_accessed": 1771943533,
+      "reinforcement_count": 1,
+      "confidence": "low"
+    },
+    {
+      "memory_id": "a3d4c96f-9b7e-4163-a6e9-5d4914a4f818",
+      "content": "Frequent calls to the GET /get-invoices API was caused by a cron job — fixed by optimizing the cron job to reduce API calls.",
+      "category": "bug_fix",
+      "repo": "portpro-backend",
+      "timestamp": 1771955091,
+      "last_accessed": 1771955239,
+      "reinforcement_count": 1,
+      "confidence": "low"
+    },
+    {
+      "memory_id": "a945134c-ddcf-4bc3-aae9-8eef927aaaaf",
+      "content": "This was a Mongo prod alert fix. High CPU from an expensive invoices aggregation was traced to GET /get-invoices. Debug flow: (1) In Cursor, asked which API/service makes the query → identified GET /get-invoices. (2) Queried New Relic and confirmed the API is called by a cron. (3) Root cause: a cron calling get-invoices (e.g. isOnlyMainInvoices + large skip). Still to find: which specific service/cron calls it.",
+      "category": "bug_fix",
+      "repo": "portpro-backend",
+      "timestamp": 1771955239,
+      "last_accessed": 1771955239,
+      "reinforcement_count": 2,
+      "confidence": "medium"
+    },
+    {
+      "memory_id": "ae830325-edeb-44b4-8ce3-6b6e75d5eef6",
+      "content": "The coding style emphasizes functional programming principles.",
+      "category": "preference",
+      "timestamp": 1771950486,
+      "last_accessed": 1771950486,
+      "reinforcement_count": 1,
+      "confidence": "low"
+    },
+    {
+      "memory_id": "c2f3a35d-d5c3-4093-96dc-d2c0fe70b8cb",
+      "content": "Prioritize functional programming patterns.",
+      "category": "preference",
+      "timestamp": 1771943532,
+      "last_accessed": 1771943532,
+      "reinforcement_count": 1,
+      "confidence": "low"
+    },
+    {
+      "memory_id": "c5e26ae6-11b6-46d0-8e87-f27b0a16592b",
+      "content": "Avoid using `else` blocks.",
+      "category": "preference",
+      "timestamp": 1771943533,
+      "last_accessed": 1771943533,
+      "reinforcement_count": 1,
+      "confidence": "low"
+    },
+    {
+      "memory_id": "c75aea50-e914-4a7f-be08-cb864ba50b1b",
+      "content": "Use `const` by default.",
+      "category": "preference",
+      "timestamp": 1771943532,
+      "last_accessed": 1771943532,
+      "reinforcement_count": 1,
+      "confidence": "low"
+    },
+    {
+      "memory_id": "ecf78706-12c9-4267-a9a1-42483c1281aa",
+      "content": "Prefer `const` over `let`.",
+      "category": "preference",
+      "lang": "JavaScript",
+      "timestamp": 1771947067,
+      "last_accessed": 1771947067,
+      "reinforcement_count": 1,
+      "confidence": "low"
+    },
+    {
+      "memory_id": "f22f76b1-9432-4651-ae42-c6315b81de70",
+      "content": "Use the additionalInfo field for non-relevant or view-only fields in spot requests.",
+      "category": "general",
+      "repo": "portpro-backend",
+      "timestamp": 1771998815,
+      "last_accessed": 1771998845,
+      "reinforcement_count": 1,
+      "confidence": "low"
+    }
+  ]
+}
