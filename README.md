@@ -91,6 +91,30 @@ export EMBEDDER_MODEL=text-embedding-3-small
 export OPENAI_API_KEY=your-api-key
 ```
 
+### Testing the memory-chat agent locally (Gemini)
+
+You can run the memory-chat agent in a local REPL using your Gemini API key. The agent uses the same tools (search_memory, save_memory, get_memory_index) and talks to Qdrant.
+
+1. **Start Qdrant** (if not already running):
+
+   ```bash
+   docker run -p 6334:6334 qdrant/qdrant
+   ```
+
+2. **Run the agent binary** from the `mcp` directory:
+
+   ```bash
+   cd mcp
+   GEMINI_API_KEY=your_gemini_key \
+   LLM_PROVIDER=gemini \
+   EMBEDDER_PROVIDER=gemini \
+   AGENT_PROVIDER=gemini \
+   USER_ID=sumankhadka \
+   cargo run --bin memory_chat_agent
+   ```
+
+   Type a message and press Enter; the agent will reply (and may call tools). Empty line exits.
+
 ## Configuration
 
 All configuration is done via environment variables:

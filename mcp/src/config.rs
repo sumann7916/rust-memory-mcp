@@ -25,6 +25,7 @@ pub struct Config {
     pub openai_api_key: Option<String>,
     pub gemini_api_key: Option<String>,
     pub anthropic_api_key: Option<String>,
+    pub groq_api_key: Option<String>,
     pub qdrant_host: String,
     pub qdrant_port: u16,
     pub qdrant_collection: String,
@@ -36,6 +37,8 @@ pub struct Config {
     pub scope_boost_repo: f32,
     pub scope_boost_module: f32,
     pub topic_boost_max: f32,
+    pub agent_provider: Option<LLMProviderType>,
+    pub agent_model: Option<String>,
 }
 
 impl Config {
@@ -66,6 +69,20 @@ impl Config {
         let openai_api_key = env::var("OPENAI_API_KEY").ok();
         let gemini_api_key = env::var("GEMINI_API_KEY").ok();
         let anthropic_api_key = env::var("ANTHROPIC_API_KEY").ok();
+        let groq_api_key = env::var("GROQ_API_KEY").ok();
+
+        let agent_provider = match env::var("AGENT_PROVIDER")
+            .ok()
+            .map(|s| s.to_lowercase())
+            .as_deref()
+        {
+            Some("ollama") => Some(LLMProviderType::Ollama),
+            Some("openai") => Some(LLMProviderType::OpenAI),
+            Some("gemini") => Some(LLMProviderType::Gemini),
+            Some("anthropic") => Some(LLMProviderType::Anthropic),
+            _ => None,
+        };
+        let agent_model = env::var("AGENT_MODEL").ok();
 
         if llm_provider == LLMProviderType::OpenAI && openai_api_key.is_none() {
             anyhow::bail!("OPENAI_API_KEY required for OpenAI LLM provider");
@@ -82,6 +99,9 @@ impl Config {
         if embedder_provider == EmbedderProviderType::Gemini && gemini_api_key.is_none() {
             anyhow::bail!("GEMINI_API_KEY required for Gemini embedder provider");
         }
+        if agent_provider == Some(LLMProviderType::Gemini) && gemini_api_key.is_none() {
+            anyhow::bail!("GEMINI_API_KEY required when AGENT_PROVIDER=gemini");
+        }
 
         Ok(Config {
             llm_provider,
@@ -93,6 +113,9 @@ impl Config {
             openai_api_key,
             gemini_api_key,
             anthropic_api_key,
+            groq_api_key,
+            agent_provider,
+            agent_model,
             qdrant_host: env::var("QDRANT_HOST").unwrap_or_else(|_| "localhost".to_string()),
             qdrant_port: env::var("QDRANT_PORT")
                 .ok()
@@ -139,7 +162,7 @@ impl Config {
         match self.llm_provider {
             LLMProviderType::Ollama => "qwen2.5-coder:7b",
             LLMProviderType::OpenAI => "gpt-4o-mini",
-            LLMProviderType::Gemini => "gemini-2.0-flash",
+            LLMProviderType::Gemini => "gemini-2.5-flash",
             LLMProviderType::Anthropic => "claude-haiku-4-5",
         }
     }

@@ -1,7 +1,10 @@
-mod config;
-mod providers;
-mod qdrant;
-mod tools;
+use memory_mcp::config::Config;
+use memory_mcp::providers::{create_embedder, EmbedderProvider};
+use memory_mcp::qdrant::QdrantStore;
+use memory_mcp::tools::{
+    self, CorrectMemoryParams, DeleteMemoryParams, GetAllMemoriesParams,
+    GetMemoryIndexParams, SaveMemoryParams, SearchMemoryParams,
+};
 
 use rmcp::{
     handler::server::{
@@ -17,13 +20,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use config::Config;
-use providers::{create_embedder, EmbedderProvider};
-use qdrant::QdrantStore;
-use tools::{
-    CorrectMemoryParams, DeleteMemoryParams, GetAllMemoriesParams,
-    GetMemoryIndexParams, SaveMemoryParams, SearchMemoryParams,
-};
 
 pub struct MemoryServer {
     tool_router: ToolRouter<Self>,
@@ -342,6 +338,7 @@ impl ServerHandler for MemoryServer {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    dotenvy::dotenv().ok();
     let config = Config::from_env()?;
 
     let embedder = create_embedder(&config);
