@@ -77,7 +77,7 @@ def get_embedder_config():
         return {
             "provider": "gemini",
             "config": {
-                "model": model or "models/text-embedding-004",
+                "model": model or "models/gemini-embedding-001",
                 "api_key": api_key,
             },
         }

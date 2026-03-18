@@ -171,7 +171,7 @@ impl Config {
         match self.embedder_provider {
             EmbedderProviderType::Ollama => "nomic-embed-text",
             EmbedderProviderType::OpenAI => "text-embedding-3-small",
-            EmbedderProviderType::Gemini => "models/text-embedding-004",
+            EmbedderProviderType::Gemini => "models/gemini-embedding-001",
         }
     }
 
@@ -191,7 +191,7 @@ impl Config {
         match self.embedder_provider {
             EmbedderProviderType::Ollama => 768,
             EmbedderProviderType::OpenAI => 1536,
-            EmbedderProviderType::Gemini => 768,
+            EmbedderProviderType::Gemini => 3072,
         }
     }
 }

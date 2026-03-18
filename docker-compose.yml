@@ -8,6 +8,7 @@ services:
       - qdrant_storage:/qdrant/storage
     environment:
       - QDRANT__SERVICE__GRPC_PORT=6334
+      - QDRANT__STORAGE__WAL__WAL_CAPACITY_MB=512
 
 volumes:
   qdrant_storage:

@@ -79,7 +79,7 @@ No environment variables needed - Ollama is the default.
 
 ```bash
 export EMBEDDER_PROVIDER=gemini
-export EMBEDDER_MODEL=models/text-embedding-004
+export EMBEDDER_MODEL=models/gemini-embedding-001
 export GEMINI_API_KEY=your-api-key
 ```
 
