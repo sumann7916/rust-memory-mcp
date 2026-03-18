@@ -32,15 +32,6 @@ async fn main() -> anyhow::Result<()> {
     )
     .await?;
 
-    let agent = MemoryChatAgent::new(
-        user_id.clone(),
-        Arc::new(embedder),
-        Arc::new(store),
-        Arc::new(config.clone()),
-    )
-    .with_cached_index()
-    .await?;
-
     let llm = create_agent_llm(&config);
 
     // Readiness check: one no-tools call to verify API key and model work
@@ -62,7 +53,19 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    let runtime = AgentRuntime::new(llm);
+    let llm_arc: Arc<Box<dyn memory_mcp::agent::AgentLLMProvider>> = Arc::new(llm);
+
+    let agent = MemoryChatAgent::new(
+        user_id.clone(),
+        Arc::new(embedder),
+        Arc::new(store),
+        Arc::new(config.clone()),
+        llm_arc.clone(),
+    )
+    .with_cached_index()
+    .await?;
+
+    let runtime = AgentRuntime::new_with_arc(llm_arc);
 
     eprintln!("Memory chat agent ready. User: {user_id}. Type a message and press Enter (empty to exit).");
     let stdin = io::stdin();

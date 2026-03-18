@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use anyhow::{anyhow, Result};
 
 use super::llm::AgentLLMProvider;
@@ -5,11 +7,15 @@ use super::message::{LLMResponse, Message, ToolDef};
 use super::traits::{Agent, Tool};
 
 pub struct AgentRuntime {
-    llm: Box<dyn AgentLLMProvider>,
+    llm: Arc<Box<dyn AgentLLMProvider>>,
 }
 
 impl AgentRuntime {
     pub fn new(llm: Box<dyn AgentLLMProvider>) -> Self {
+        Self { llm: Arc::new(llm) }
+    }
+
+    pub fn new_with_arc(llm: Arc<Box<dyn AgentLLMProvider>>) -> Self {
         Self { llm }
     }
 

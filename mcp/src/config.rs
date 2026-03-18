@@ -126,7 +126,7 @@ impl Config {
             memory_score_threshold: env::var("MEMORY_SCORE_THRESHOLD")
                 .ok()
                 .and_then(|v| v.parse().ok())
-                .unwrap_or(0.75),
+                .unwrap_or(0.2),
             memory_dedup_threshold: env::var("MEMORY_DEDUP_THRESHOLD")
                 .ok()
                 .and_then(|v| v.parse().ok())

@@ -250,13 +250,19 @@ enum AnthropicResponseBlock {
 }
 
 fn convert_messages_to_anthropic(messages: &[Message]) -> (Option<String>, Vec<AnthropicMessage>) {
-    let mut system_prompt = None;
+    let mut system_prompt: Option<String> = None;
     let mut anthropic_messages = Vec::new();
 
     for m in messages {
         match m.role {
             Role::System => {
-                system_prompt = Some(m.content.clone());
+                match &mut system_prompt {
+                    Some(existing) => {
+                        existing.push_str("\n\n");
+                        existing.push_str(&m.content);
+                    }
+                    None => system_prompt = Some(m.content.clone()),
+                }
             }
             Role::User => {
                 anthropic_messages.push(AnthropicMessage {
@@ -589,13 +595,19 @@ struct GeminiResponseFunctionCall {
 }
 
 fn convert_messages_to_gemini(messages: &[Message]) -> (Option<String>, Vec<GeminiContentOwned>) {
-    let mut system_instruction = None;
+    let mut system_instruction: Option<String> = None;
     let mut contents = Vec::new();
 
     for m in messages {
         match m.role {
             Role::System => {
-                system_instruction = Some(m.content.clone());
+                match &mut system_instruction {
+                    Some(existing) => {
+                        existing.push_str("\n\n");
+                        existing.push_str(&m.content);
+                    }
+                    None => system_instruction = Some(m.content.clone()),
+                }
             }
             Role::User => {
                 if m.content.is_empty() {

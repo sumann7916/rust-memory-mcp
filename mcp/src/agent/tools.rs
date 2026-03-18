@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -12,6 +12,7 @@ use crate::tools::{
 };
 
 use super::traits::Tool;
+use crate::agent::agents::memory_chat::SearchConfig;
 
 // ============================================================================
 // SearchMemoryTool
@@ -21,6 +22,7 @@ pub struct SearchMemoryTool {
     embedder: Arc<Box<dyn EmbedderProvider>>,
     store: Arc<QdrantStore>,
     config: Arc<Config>,
+    search_config: Arc<Mutex<SearchConfig>>,
 }
 
 impl SearchMemoryTool {
@@ -28,11 +30,13 @@ impl SearchMemoryTool {
         embedder: Arc<Box<dyn EmbedderProvider>>,
         store: Arc<QdrantStore>,
         config: Arc<Config>,
+        search_config: Arc<Mutex<SearchConfig>>,
     ) -> Self {
         Self {
             embedder,
             store,
             config,
+            search_config,
         }
     }
 }
@@ -91,7 +95,12 @@ impl Tool for SearchMemoryTool {
     async fn call(&self, args: Value) -> Result<Value> {
         let mut params: SearchMemoryParams = serde_json::from_value(args)?;
         if params.min_score.is_none() {
-            params.min_score = Some(0.5);
+            let config = self.search_config.lock().unwrap();
+            params.min_score = config.min_score;
+        }
+        if params.limit == 5 {
+            let config = self.search_config.lock().unwrap();
+            params.limit = config.default_limit;
         }
         let result = tools::search_memory(params, &**self.embedder, &self.store, &self.config).await?;
         Ok(serde_json::to_value(result)?)
@@ -129,7 +138,7 @@ impl Tool for SaveMemoryTool {
     }
 
     fn description(&self) -> &str {
-        "Save a new memory. Automatically handles deduplication (reinforcement if similar exists) and contradiction detection (marks old as superseded)."
+        "Save a new memory. Required: content, user_id, scope (one of: global/lang/feature/repo/module). Optional: topics, repo, lang, module, feature. Scope determines memory reach: module (most specific, needs repo+module), repo (needs repo), feature (needs feature), lang (needs lang), global (no extra fields). Automatically handles deduplication and contradiction detection."
     }
 
     fn parameters(&self) -> Value {
@@ -147,28 +156,28 @@ impl Tool for SaveMemoryTool {
                 "topics": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "Topics/tags for the memory"
+                    "description": "Topics/tags for the memory (optional, defaults to empty array)"
                 },
                 "scope": {
                     "type": "string",
                     "enum": ["global", "lang", "feature", "repo", "module"],
-                    "description": "Scope of the memory"
+                    "description": "REQUIRED. Scope of the memory: 'global' (universal), 'lang' (language-specific, requires lang param), 'feature' (product feature, requires feature param), 'repo' (repository-specific, requires repo param), 'module' (module/directory, requires repo+module params)"
                 },
                 "repo": {
                     "type": "string",
-                    "description": "Repository name (required for repo/module scope)"
+                    "description": "Repository name (required for 'repo' and 'module' scopes)"
                 },
                 "lang": {
                     "type": "string",
-                    "description": "Programming language (required for lang scope)"
+                    "description": "Programming language (required for 'lang' scope)"
                 },
                 "module": {
                     "type": "string",
-                    "description": "Module/file path (required for module scope)"
+                    "description": "Module/file path like 'src/auth' (required for 'module' scope)"
                 },
                 "feature": {
                     "type": "string",
-                    "description": "Feature name (for feature scope)"
+                    "description": "Feature name (required for 'feature' scope)"
                 }
             },
             "required": ["content", "user_id", "scope"]
@@ -267,5 +276,88 @@ impl Tool for GetAllMemoriesTool {
         let params: GetAllMemoriesParams = serde_json::from_value(args)?;
         let result = tools::get_all_memories(params, &self.store).await?;
         Ok(serde_json::to_value(result)?)
+    }
+}
+
+// ============================================================================
+// ConfigureSearchTool
+// ============================================================================
+
+use serde::Deserialize;
+
+#[derive(Debug, Deserialize)]
+struct ConfigureSearchParams {
+    #[serde(default)]
+    min_score: Option<f32>,
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+pub struct ConfigureSearchTool {
+    config: Arc<Mutex<SearchConfig>>,
+}
+
+impl ConfigureSearchTool {
+    pub fn new(config: Arc<Mutex<SearchConfig>>) -> Self {
+        Self { config }
+    }
+}
+
+#[async_trait]
+impl Tool for ConfigureSearchTool {
+    fn name(&self) -> &str {
+        "configure_search"
+    }
+
+    fn description(&self) -> &str {
+        "Configure search parameters. Settings persist across all future searches in this session. Use when user requests to change min_score threshold or result limit."
+    }
+
+    fn parameters(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "min_score": {
+                    "type": "number",
+                    "description": "Minimum similarity score threshold (0.0-1.0). Lower values return more results. Default: 0.2"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of results to return (1-10). Default: 5"
+                }
+            }
+        })
+    }
+
+    async fn call(&self, args: Value) -> Result<Value> {
+        let params: ConfigureSearchParams = serde_json::from_value(args)?;
+        let mut config = self.config.lock().unwrap();
+        
+        let mut updated = Vec::new();
+        
+        if let Some(min_score) = params.min_score {
+            config.min_score = Some(min_score.max(0.0).min(1.0));
+            updated.push(format!("min_score={}", min_score));
+        }
+        
+        if let Some(limit) = params.limit {
+            config.default_limit = limit.max(1).min(10);
+            updated.push(format!("limit={}", limit));
+        }
+        
+        let message = if updated.is_empty() {
+            "No parameters updated".to_string()
+        } else {
+            format!("Search configuration updated: {}", updated.join(", "))
+        };
+        
+        Ok(json!({
+            "success": true,
+            "message": message,
+            "current_config": {
+                "min_score": config.min_score,
+                "limit": config.default_limit
+            }
+        }))
     }
 }

@@ -9,37 +9,71 @@ use crate::providers::EmbedderProvider;
 use crate::qdrant::{confidence_from_count, MemoryPayload, QdrantStore};
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "SaveMemoryParams", description = "Parameters for saving a memory")]
 pub struct SaveMemoryParams {
+    #[schemars(description = "The memory content to save (REQUIRED)")]
     pub content: String,
+    
+    #[schemars(description = "User ID (REQUIRED)")]
     pub user_id: String,
+    
     #[serde(default)]
+    #[schemars(description = "Topics/tags for categorization (optional, defaults to empty array)")]
     pub topics: Vec<String>,
+    
+    #[schemars(
+        description = "Scope of the memory (REQUIRED): 'global' (universal), 'lang' (language-specific), 'feature' (product feature), 'repo' (repository), or 'module' (directory)"
+    )]
     pub scope: String,
+    
     #[serde(default)]
+    #[schemars(description = "Repository name (optional, but REQUIRED for 'repo' and 'module' scopes)")]
     pub repo: Option<String>,
+    
     #[serde(default)]
+    #[schemars(description = "Programming language (optional, but REQUIRED for 'lang' scope)")]
     pub lang: Option<String>,
+    
     #[serde(default)]
+    #[schemars(description = "Module/directory path like 'src/auth' (optional, but REQUIRED for 'module' scope)")]
     pub module: Option<String>,
+    
     #[serde(default)]
+    #[schemars(description = "Feature/product area name (optional, but REQUIRED for 'feature' scope)")]
     pub feature: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "SearchMemoryParams", description = "Parameters for searching memories")]
 pub struct SearchMemoryParams {
+    #[schemars(description = "Search query (REQUIRED)")]
     pub query: String,
+    
+    #[schemars(description = "User ID (REQUIRED)")]
     pub user_id: String,
+    
     #[serde(default)]
+    #[schemars(description = "Repository name for context boost (optional)")]
     pub repo: Option<String>,
+    
     #[serde(default)]
+    #[schemars(description = "Module/directory path for context boost (optional)")]
     pub module: Option<String>,
+    
     #[serde(default)]
+    #[schemars(description = "Programming language for context boost (optional)")]
     pub lang: Option<String>,
+    
     #[serde(default)]
+    #[schemars(description = "Feature/product area for context boost (optional)")]
     pub feature: Option<String>,
+    
     #[serde(default = "default_limit")]
+    #[schemars(description = "Maximum number of results (optional, default: 5, max: 10)")]
     pub limit: usize,
+    
     #[serde(default)]
+    #[schemars(description = "Minimum similarity score threshold (optional, default: 0.2)")]
     pub min_score: Option<f32>,
 }
 
